@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Crypto Fraud Detection System - Futuristic Dark Theme Design System */
+
+@layer base {
+  :root {
+    /* Dark theme base colors - Using #1E201E */
+    --background: 120 3% 12%;
+    --foreground: 210 40% 98%;
+
+    --card: 120 3% 14%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 120 3% 14%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Neon blue primary */
+    --primary: 195 100% 50%;
+    --primary-foreground: 222 84% 4.9%;
+    --primary-glow: 195 100% 70%;
+
+    /* Dark secondary */
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    /* Purple accent */
+    --accent: 280 100% 70%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Danger/Fraud - Neon red */
+    --destructive: 0 100% 67%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Success/Safe - Neon green */
+    --success: 142 100% 50%;
+    --success-foreground: 222 84% 4.9%;
+
+    /* Warning/Suspicious - Neon orange */
+    --warning: 35 100% 60%;
+    --warning-foreground: 222 84% 4.9%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 195 100% 50%;
+
+    --radius: 0.75rem;
+
+    /* Custom gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(195 100% 50%), hsl(280 100% 70%));
+    --gradient-success: linear-gradient(135deg, hsl(142 100% 50%), hsl(195 100% 50%));
+    --gradient-danger: linear-gradient(135deg, hsl(0 100% 67%), hsl(280 100% 70%));
+    --gradient-background: linear-gradient(135deg, hsl(222 84% 4.9%), hsl(217.2 32.6% 8%));
+
+    /* Shadows with glow effects */
+    --shadow-glow: 0 0 20px hsl(195 100% 50% / 0.3);
+    --shadow-card: 0 8px 32px hsl(222 84% 4.9% / 0.8);
+    --shadow-danger: 0 0 20px hsl(0 100% 67% / 0.3);
+    --shadow-success: 0 0 20px hsl(142 100% 50% / 0.3);
+
+    /* Animation variables */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+    /* Sidebar colors for dark theme */
+    --sidebar-background: 120 3% 10%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 195 100% 50%;
+    --sidebar-primary-foreground: 120 3% 12%;
+    --sidebar-accent: 120 3% 18%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 120 3% 18%;
+    --sidebar-ring: 195 100% 50%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
