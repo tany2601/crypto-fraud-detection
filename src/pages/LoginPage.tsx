@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Shield, Github, Chrome } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/auth/AuthContext";
+
 
 const LoginPage = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -14,16 +16,20 @@ const LoginPage = () => {
   const [password, setPassword] = useState("");
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { login, register } = useAuth();
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Simulate login/signup
-    toast({
-      title: isLogin ? "Welcome back!" : "Account created!",
-      description: isLogin ? "Successfully logged in." : "Your account has been created successfully.",
-    });
+  
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  try {
+    if (isLogin) await login(email, password);
+    else await register(email, password);
+    toast({ title: isLogin ? "Welcome back!" : "Account created!", description: "Signed in successfully." });
     navigate("/dashboard");
-  };
+  } catch (err) {
+    toast({ title: "Auth failed", description: String(err), variant: "destructive" });
+  }
+};
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">

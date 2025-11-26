@@ -1,54 +1,101 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, BarChart, Bar
 } from "recharts";
-import { 
-  TrendingUp, 
-  Shield, 
-  AlertTriangle, 
-  Eye, 
-  Activity,
-  DollarSign,
-  Users
-} from "lucide-react";
+import { TrendingUp, Shield, AlertTriangle, Eye, Activity, DollarSign, Users, Loader2 } from "lucide-react";
+import { useAuth } from "@/auth/AuthContext";
 
-// Dummy data for charts
-const transactionTrends = [
-  { day: "Mon", transactions: 1240, fraudulent: 23 },
-  { day: "Tue", transactions: 1450, fraudulent: 31 },
-  { day: "Wed", transactions: 1680, fraudulent: 18 },
-  { day: "Thu", transactions: 1890, fraudulent: 42 },
-  { day: "Fri", transactions: 2100, fraudulent: 15 },
-  { day: "Sat", transactions: 1800, fraudulent: 28 },
-  { day: "Sun", transactions: 1550, fraudulent: 12 }
-];
+const API = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
-const fraudDistribution = [
-  { name: "Safe", value: 94.2, color: "hsl(142, 100%, 50%)" },
-  { name: "Suspicious", value: 3.8, color: "hsl(35, 100%, 60%)" },
-  { name: "Fraudulent", value: 2.0, color: "hsl(0, 100%, 67%)" }
-];
+type TxItem = {
+  txHash: string;
+  from: string;
+  to: string;
+  valueEth: number;
+  timeStamp: number;
+  riskScore: number;
+  riskLevel: "low" | "medium" | "high";
+  gasPriceGwei: number;
+  isMixerInvolved: boolean;
+};
+type AnalyzeResponse = { count: number; items: TxItem[] };
 
-const riskCategories = [
-  { category: "High Risk", count: 142, color: "hsl(0, 100%, 67%)" },
-  { category: "Medium Risk", count: 287, color: "hsl(35, 100%, 60%)" },
-  { category: "Low Risk", count: 1891, color: "hsl(142, 100%, 50%)" }
-];
+function useAnalyze(address: string | null, token: string | null) {
+  return useQuery<AnalyzeResponse>({
+    queryKey: ["dashboard-analyze", address, token],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/analyze/${address}?page=1&offset=50`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    enabled: Boolean(address && address.length > 0),
+    refetchInterval: 15000,
+    refetchOnWindowFocus: false,
+  });
+}
 
 const DashboardPage = () => {
+  const { token } = useAuth();
+  const [address, setAddress] = useState<string | null>(() => localStorage.getItem("last_address"));
+
+  // stay synced with changes from Transactions page
+  useEffect(() => {
+    const id = setInterval(() => {
+      const stored = localStorage.getItem("last_address");
+      if (stored && stored !== address) setAddress(stored);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [address]);
+
+  const { data, isLoading, isError } = useAnalyze(address, token);
+  const items = data?.items ?? [];
+
+  // KPI calculations
+  const totalTx = items.length;
+  const fraudCount = items.filter((t) => t.riskLevel === "high").length;
+  const suspiciousCount = items.filter((t) => t.riskLevel === "medium").length;
+  const safeCount = items.filter((t) => t.riskLevel === "low").length;
+
+  const detectionRate = totalTx ? ((fraudCount + suspiciousCount) / totalTx) * 100 : 0;
+
+  // Trend chart (group by hour)
+  const transactionTrends = useMemo(() => {
+    const byHour = new Map<string, { transactions: number; fraudulent: number }>();
+    for (const t of items) {
+      const d = new Date(t.timeStamp * 1000);
+      const key = d.toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit" });
+      const cur = byHour.get(key) || { transactions: 0, fraudulent: 0 };
+      cur.transactions += 1;
+      if (t.riskLevel === "high") cur.fraudulent += 1;
+      byHour.set(key, cur);
+    }
+    return Array.from(byHour.entries()).map(([day, v]) => ({ day, ...v }));
+  }, [items]);
+
+  const fraudDistribution = useMemo(
+    () => [
+      { name: "Safe", value: totalTx ? (safeCount / totalTx) * 100 : 0, color: "hsl(142, 100%, 50%)" },
+      { name: "Suspicious", value: totalTx ? (suspiciousCount / totalTx) * 100 : 0, color: "hsl(35, 100%, 60%)" },
+      { name: "Fraudulent", value: totalTx ? (fraudCount / totalTx) * 100 : 0, color: "hsl(0, 100%, 67%)" },
+    ],
+    [totalTx, safeCount, suspiciousCount, fraudCount]
+  );
+
+  const riskCategories = useMemo(
+    () => [
+      { category: "High Risk", count: fraudCount, color: "hsl(0, 100%, 67%)" },
+      { category: "Medium Risk", count: suspiciousCount, color: "hsl(35, 100%, 60%)" },
+      { category: "Low Risk", count: safeCount, color: "hsl(142, 100%, 50%)" },
+    ],
+    [fraudCount, suspiciousCount, safeCount]
+  );
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -57,7 +104,11 @@ const DashboardPage = () => {
             Dashboard
           </h1>
           <p className="text-muted-foreground">
-            Real-time crypto fraud detection overview
+            {address ? (
+              <>Live overview for <span className="font-mono">{address}</span></>
+            ) : (
+              <>Set a wallet on the Transactions page to start monitoring.</>
+            )}
           </p>
         </div>
         <Badge variant="outline" className="border-primary/30 text-primary">
@@ -74,9 +125,9 @@ const DashboardPage = () => {
             <DollarSign className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">12,847</div>
+            <div className="text-2xl font-bold text-primary">{isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : totalTx}</div>
             <p className="text-xs text-muted-foreground">
-              <span className="text-success">↗ +12.3%</span> from last week
+              {address ? "Last fetched window" : "Set an address to begin"}
             </p>
           </CardContent>
         </Card>
@@ -87,23 +138,19 @@ const DashboardPage = () => {
             <Shield className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">169</div>
-            <p className="text-xs text-muted-foreground">
-              <span className="text-destructive">↗ +2.1%</span> from last week
-            </p>
+            <div className="text-2xl font-bold text-destructive">{fraudCount}</div>
+            <p className="text-xs text-muted-foreground">High risk items</p>
           </CardContent>
         </Card>
 
         <Card className="border-border/50 hover:shadow-lg hover:shadow-warning/5 transition-all">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Wallets Monitored</CardTitle>
+            <CardTitle className="text-sm font-medium">Suspicious</CardTitle>
             <Eye className="h-4 w-4 text-warning" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-warning">8,942</div>
-            <p className="text-xs text-muted-foreground">
-              <span className="text-success">↗ +5.7%</span> from last week
-            </p>
+            <div className="text-2xl font-bold text-warning">{suspiciousCount}</div>
+            <p className="text-xs text-muted-foreground">Medium risk items</p>
           </CardContent>
         </Card>
 
@@ -113,10 +160,8 @@ const DashboardPage = () => {
             <TrendingUp className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">98.7%</div>
-            <p className="text-xs text-muted-foreground">
-              <span className="text-success">↗ +0.3%</span> accuracy improvement
-            </p>
+            <div className="text-2xl font-bold text-success">{detectionRate.toFixed(1)}%</div>
+            <p className="text-xs text-muted-foreground">High + Medium / Total</p>
           </CardContent>
         </Card>
       </div>
@@ -130,45 +175,18 @@ const DashboardPage = () => {
               Transaction Trends
             </CardTitle>
             <CardDescription>
-              Daily transaction volume and fraud detection over the past week
+              Volume and detected fraud by hour (current window)
             </CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={transactionTrends}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(120, 3%, 18%)" />
-                <XAxis 
-                  dataKey="day" 
-                  stroke="hsl(215, 20.2%, 65.1%)"
-                  fontSize={12}
-                />
-                <YAxis 
-                  stroke="hsl(215, 20.2%, 65.1%)"
-                  fontSize={12}
-                />
-                <Tooltip 
-                  contentStyle={{
-                    backgroundColor: "hsl(120, 3%, 14%)",
-                    border: "1px solid hsl(120, 3%, 18%)",
-                    borderRadius: "8px",
-                    color: "hsl(210, 40%, 98%)"
-                  }}
-                  labelStyle={{ color: "hsl(210, 40%, 98%)" }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="transactions" 
-                  stroke="hsl(195, 100%, 50%)" 
-                  strokeWidth={2}
-                  name="Total Transactions"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="fraudulent" 
-                  stroke="hsl(0, 100%, 67%)" 
-                  strokeWidth={2}
-                  name="Fraudulent"
-                />
+                <XAxis dataKey="day" stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
+                <YAxis stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
+                <Tooltip contentStyle={{ backgroundColor: "hsl(120, 3%, 14%)", border: "1px solid hsl(120, 3%, 18%)", borderRadius: "8px", color: "hsl(210, 40%, 98%)" }} labelStyle={{ color: "hsl(210, 40%, 98%)" }} />
+                <Line type="monotone" dataKey="transactions" stroke="hsl(195, 100%, 50%)" strokeWidth={2} name="Total" />
+                <Line type="monotone" dataKey="fraudulent" stroke="hsl(0, 100%, 67%)" strokeWidth={2} name="Fraudulent" />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -182,46 +200,24 @@ const DashboardPage = () => {
               Security Status Distribution
             </CardTitle>
             <CardDescription>
-              Current distribution of transaction risk levels
+              Distribution across risk levels
             </CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
-                <Pie
-                  data={fraudDistribution}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {fraudDistribution.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
+                <Pie data={fraudDistribution} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
+                  {fraudDistribution.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                 </Pie>
-                <Tooltip 
-                  contentStyle={{
-                    backgroundColor: "hsl(120, 3%, 14%)",
-                    border: "1px solid hsl(120, 3%, 18%)",
-                    borderRadius: "8px",
-                    color: "hsl(210, 40%, 98%)"
-                  }}
-                  labelStyle={{ color: "hsl(210, 40%, 98%)" }}
-                  formatter={(value) => [`${value}%`, "Percentage"]}
-                />
+                <Tooltip contentStyle={{ backgroundColor: "hsl(120, 3%, 14%)", border: "1px solid hsl(120, 3%, 18%)", borderRadius: "8px", color: "hsl(210, 40%, 98%)" }} labelStyle={{ color: "hsl(210, 40%, 98%)" }} formatter={(value: number) => [`${value.toFixed(1)}%`, "Percentage"]} />
               </PieChart>
             </ResponsiveContainer>
             <div className="flex justify-center gap-4 mt-4">
               {fraudDistribution.map((item, index) => (
                 <div key={index} className="flex items-center gap-2">
-                  <div 
-                    className="w-3 h-3 rounded-full" 
-                    style={{ backgroundColor: item.color }}
-                  />
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
                   <span className="text-sm text-muted-foreground">
-                    {item.name}: {item.value}%
+                    {item.name}: {item.value.toFixed(1)}%
                   </span>
                 </div>
               ))}
@@ -237,34 +233,15 @@ const DashboardPage = () => {
             <AlertTriangle className="h-5 w-5 text-warning" />
             Risk Category Breakdown
           </CardTitle>
-          <CardDescription>
-            Number of transactions by risk level in the last 24 hours
-          </CardDescription>
+          <CardDescription>Counts by risk level (current window)</CardDescription>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={riskCategories} layout="horizontal">
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(120, 3%, 18%)" />
-              <XAxis 
-                type="number"
-                stroke="hsl(215, 20.2%, 65.1%)"
-                fontSize={12}
-              />
-              <YAxis 
-                type="category"
-                dataKey="category"
-                stroke="hsl(215, 20.2%, 65.1%)"
-                fontSize={12}
-              />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: "hsl(120, 3%, 14%)",
-                  border: "1px solid hsl(120, 3%, 18%)",
-                  borderRadius: "8px",
-                  color: "hsl(210, 40%, 98%)"
-                }}
-                labelStyle={{ color: "hsl(210, 40%, 98%)" }}
-              />
+              <XAxis type="number" stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
+              <YAxis type="category" dataKey="category" stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
+              <Tooltip contentStyle={{ backgroundColor: "hsl(120, 3%, 14%)", border: "1px solid hsl(120, 3%, 18%)", borderRadius: "8px", color: "hsl(210, 40%, 98%)" }} />
               <Bar dataKey="count" fill="hsl(195, 100%, 50%)" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
