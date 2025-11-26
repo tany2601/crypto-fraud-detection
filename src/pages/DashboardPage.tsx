@@ -2,14 +2,25 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { 
+import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart, Bar
 } from "recharts";
-import { TrendingUp, Shield, AlertTriangle, Eye, Activity, DollarSign, Users, Loader2 } from "lucide-react";
+import { TrendingUp, Shield, AlertTriangle, Eye, Activity, DollarSign, Loader2 } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+
+type Chain = "eth" | "btc";
+
+function inferChainFromAddress(addr: string): Chain {
+  const a = addr.trim();
+  if (a.startsWith("0x") && a.length === 42) return "eth";
+  const lower = a.toLowerCase();
+  if (lower.startsWith("bc1") || lower.startsWith("tb1")) return "btc";
+  if (/^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(a)) return "btc";
+  return "eth";
+}
 
 type TxItem = {
   txHash: string;
@@ -24,11 +35,12 @@ type TxItem = {
 };
 type AnalyzeResponse = { count: number; items: TxItem[] };
 
-function useAnalyze(address: string | null, token: string | null) {
+function useAnalyze(chain: Chain, address: string | null, token: string | null) {
   return useQuery<AnalyzeResponse>({
-    queryKey: ["dashboard-analyze", address, token],
+    queryKey: ["dashboard-analyze", chain, address, token],
     queryFn: async () => {
-      const res = await fetch(`${API}/api/analyze/${address}?page=1&offset=50`, {
+      if (!address) throw new Error("No address");
+      const res = await fetch(`${API}/api/analyze/${chain}/${address}?page=1&offset=50`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(await res.text());
@@ -42,34 +54,52 @@ function useAnalyze(address: string | null, token: string | null) {
 
 const DashboardPage = () => {
   const { token } = useAuth();
-  const [address, setAddress] = useState<string | null>(() => localStorage.getItem("last_address"));
+  const [address, setAddress] = useState<string | null>(() =>
+    localStorage.getItem("last_address")
+  );
+  const [chain, setChain] = useState<Chain>(() => {
+    const storedChain = localStorage.getItem("last_chain") as Chain | null;
+    if (storedChain === "eth" || storedChain === "btc") return storedChain;
+    const addr = localStorage.getItem("last_address") || "";
+    return inferChainFromAddress(addr);
+  });
 
   // stay synced with changes from Transactions page
   useEffect(() => {
     const id = setInterval(() => {
-      const stored = localStorage.getItem("last_address");
-      if (stored && stored !== address) setAddress(stored);
+      const storedAddr = localStorage.getItem("last_address") || "";
+      const storedChain = localStorage.getItem("last_chain") as Chain | null;
+
+      if (storedAddr && storedAddr !== address) setAddress(storedAddr);
+      if (storedChain && storedChain !== chain) setChain(storedChain);
+      if (!storedChain && storedAddr && !address) {
+        setChain(inferChainFromAddress(storedAddr));
+      }
     }, 1000);
     return () => clearInterval(id);
-  }, [address]);
+  }, [address, chain]);
 
-  const { data, isLoading, isError } = useAnalyze(address, token);
+  const { data, isLoading, isError } = useAnalyze(chain, address, token);
   const items = data?.items ?? [];
 
-  // KPI calculations
   const totalTx = items.length;
   const fraudCount = items.filter((t) => t.riskLevel === "high").length;
   const suspiciousCount = items.filter((t) => t.riskLevel === "medium").length;
   const safeCount = items.filter((t) => t.riskLevel === "low").length;
 
-  const detectionRate = totalTx ? ((fraudCount + suspiciousCount) / totalTx) * 100 : 0;
+  const detectionRate = totalTx
+    ? ((fraudCount + suspiciousCount) / totalTx) * 100
+    : 0;
 
-  // Trend chart (group by hour)
   const transactionTrends = useMemo(() => {
     const byHour = new Map<string, { transactions: number; fraudulent: number }>();
     for (const t of items) {
       const d = new Date(t.timeStamp * 1000);
-      const key = d.toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit" });
+      const key = d.toLocaleString(undefined, {
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+      });
       const cur = byHour.get(key) || { transactions: 0, fraudulent: 0 };
       cur.transactions += 1;
       if (t.riskLevel === "high") cur.fraudulent += 1;
@@ -80,9 +110,21 @@ const DashboardPage = () => {
 
   const fraudDistribution = useMemo(
     () => [
-      { name: "Safe", value: totalTx ? (safeCount / totalTx) * 100 : 0, color: "hsl(142, 100%, 50%)" },
-      { name: "Suspicious", value: totalTx ? (suspiciousCount / totalTx) * 100 : 0, color: "hsl(35, 100%, 60%)" },
-      { name: "Fraudulent", value: totalTx ? (fraudCount / totalTx) * 100 : 0, color: "hsl(0, 100%, 67%)" },
+      {
+        name: "Safe",
+        value: totalTx ? (safeCount / totalTx) * 100 : 0,
+        color: "hsl(142, 100%, 50%)",
+      },
+      {
+        name: "Suspicious",
+        value: totalTx ? (suspiciousCount / totalTx) * 100 : 0,
+        color: "hsl(35, 100%, 60%)",
+      },
+      {
+        name: "Fraudulent",
+        value: totalTx ? (fraudCount / totalTx) * 100 : 0,
+        color: "hsl(0, 100%, 67%)",
+      },
     ],
     [totalTx, safeCount, suspiciousCount, fraudCount]
   );
@@ -90,8 +132,16 @@ const DashboardPage = () => {
   const riskCategories = useMemo(
     () => [
       { category: "High Risk", count: fraudCount, color: "hsl(0, 100%, 67%)" },
-      { category: "Medium Risk", count: suspiciousCount, color: "hsl(35, 100%, 60%)" },
-      { category: "Low Risk", count: safeCount, color: "hsl(142, 100%, 50%)" },
+      {
+        category: "Medium Risk",
+        count: suspiciousCount,
+        color: "hsl(35, 100%, 60%)",
+      },
+      {
+        category: "Low Risk",
+        count: safeCount,
+        color: "hsl(142, 100%, 50%)",
+      },
     ],
     [fraudCount, suspiciousCount, safeCount]
   );
@@ -105,7 +155,11 @@ const DashboardPage = () => {
           </h1>
           <p className="text-muted-foreground">
             {address ? (
-              <>Live overview for <span className="font-mono">{address}</span></>
+              <>
+                Live overview for{" "}
+                <span className="font-mono">{address}</span>{" "}
+                on <span className="uppercase">{chain}</span>
+              </>
             ) : (
               <>Set a wallet on the Transactions page to start monitoring.</>
             )}
@@ -125,7 +179,9 @@ const DashboardPage = () => {
             <DollarSign className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">{isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : totalTx}</div>
+            <div className="text-2xl font-bold text-primary">
+              {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : totalTx}
+            </div>
             <p className="text-xs text-muted-foreground">
               {address ? "Last fetched window" : "Set an address to begin"}
             </p>
@@ -160,7 +216,9 @@ const DashboardPage = () => {
             <TrendingUp className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">{detectionRate.toFixed(1)}%</div>
+            <div className="text-2xl font-bold text-success">
+              {detectionRate.toFixed(1)}%
+            </div>
             <p className="text-xs text-muted-foreground">High + Medium / Total</p>
           </CardContent>
         </Card>
@@ -184,9 +242,29 @@ const DashboardPage = () => {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(120, 3%, 18%)" />
                 <XAxis dataKey="day" stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
                 <YAxis stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
-                <Tooltip contentStyle={{ backgroundColor: "hsl(120, 3%, 14%)", border: "1px solid hsl(120, 3%, 18%)", borderRadius: "8px", color: "hsl(210, 40%, 98%)" }} labelStyle={{ color: "hsl(210, 40%, 98%)" }} />
-                <Line type="monotone" dataKey="transactions" stroke="hsl(195, 100%, 50%)" strokeWidth={2} name="Total" />
-                <Line type="monotone" dataKey="fraudulent" stroke="hsl(0, 100%, 67%)" strokeWidth={2} name="Fraudulent" />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(120, 3%, 14%)",
+                    border: "1px solid hsl(120, 3%, 18%)",
+                    borderRadius: "8px",
+                    color: "hsl(210, 40%, 98%)",
+                  }}
+                  labelStyle={{ color: "hsl(210, 40%, 98%)" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="transactions"
+                  stroke="hsl(195, 100%, 50%)"
+                  strokeWidth={2}
+                  name="Total"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="fraudulent"
+                  stroke="hsl(0, 100%, 67%)"
+                  strokeWidth={2}
+                  name="Fraudulent"
+                />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -199,23 +277,46 @@ const DashboardPage = () => {
               <Shield className="h-5 w-5 text-primary" />
               Security Status Distribution
             </CardTitle>
-            <CardDescription>
-              Distribution across risk levels
-            </CardDescription>
+            <CardDescription>Distribution across risk levels</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
-                <Pie data={fraudDistribution} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
-                  {fraudDistribution.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                <Pie
+                  data={fraudDistribution}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={100}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {fraudDistribution.map((entry, i) => (
+                    <Cell key={i} fill={entry.color} />
+                  ))}
                 </Pie>
-                <Tooltip contentStyle={{ backgroundColor: "hsl(120, 3%, 14%)", border: "1px solid hsl(120, 3%, 18%)", borderRadius: "8px", color: "hsl(210, 40%, 98%)" }} labelStyle={{ color: "hsl(210, 40%, 98%)" }} formatter={(value: number) => [`${value.toFixed(1)}%`, "Percentage"]} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(120, 3%, 14%)",
+                    border: "1px solid hsl(120, 3%, 18%)",
+                    borderRadius: "8px",
+                    color: "hsl(210, 40%, 98%)",
+                  }}
+                  labelStyle={{ color: "hsl(210, 40%, 98%)" }}
+                  formatter={(value: number) => [
+                    `${value.toFixed(1)}%`,
+                    "Percentage",
+                  ]}
+                />
               </PieChart>
             </ResponsiveContainer>
             <div className="flex justify-center gap-4 mt-4">
               {fraudDistribution.map((item, index) => (
                 <div key={index} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                  <div
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: item.color }}
+                  />
                   <span className="text-sm text-muted-foreground">
                     {item.name}: {item.value.toFixed(1)}%
                   </span>
@@ -239,10 +340,30 @@ const DashboardPage = () => {
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={riskCategories} layout="horizontal">
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(120, 3%, 18%)" />
-              <XAxis type="number" stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
-              <YAxis type="category" dataKey="category" stroke="hsl(215, 20.2%, 65.1%)" fontSize={12} />
-              <Tooltip contentStyle={{ backgroundColor: "hsl(120, 3%, 14%)", border: "1px solid hsl(120, 3%, 18%)", borderRadius: "8px", color: "hsl(210, 40%, 98%)" }} />
-              <Bar dataKey="count" fill="hsl(195, 100%, 50%)" radius={[0, 4, 4, 0]} />
+              <XAxis
+                type="number"
+                stroke="hsl(215, 20.2%, 65.1%)"
+                fontSize={12}
+              />
+              <YAxis
+                type="category"
+                dataKey="category"
+                stroke="hsl(215, 20.2%, 65.1%)"
+                fontSize={12}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "hsl(120, 3%, 14%)",
+                  border: "1px solid hsl(120, 3%, 18%)",
+                  borderRadius: "8px",
+                  color: "hsl(210, 40%, 98%)",
+                }}
+              />
+              <Bar
+                dataKey="count"
+                fill="hsl(195, 100%, 50%)"
+                radius={[0, 4, 4, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </CardContent>
